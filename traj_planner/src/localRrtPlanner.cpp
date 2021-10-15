@@ -13,8 +13,10 @@
 
 #define to_pcl_type(x) (pcl::PointXYZ(x(0) , x(1) , x(2)))
 
-
-
+void delete_node(void* node)
+{
+      delete static_cast<NodePtr>(node);
+}
 
 
 LocalRrtPlanner::LocalRrtPlanner(ros::NodeHandle &nh):cloud(new pcl::PointCloud<pcl::PointXYZ>),
@@ -25,11 +27,16 @@ LocalRrtPlanner::LocalRrtPlanner(ros::NodeHandle &nh):cloud(new pcl::PointCloud<
                                                     rand_x(-1,1),rand_y(-1,1)
 {
     kd_tree = kd_create(3);
+    kd_data_destructor(kd_tree , delete_node);
     iris_pose_sub = nh.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom" , 10 , &LocalRrtPlanner::pose_callback, this);
     cloud_sub = nh.subscribe<sensor_msgs::PointCloud2>("/realsense_camera/camera/depth_registered/points" , 10 , &LocalRrtPlanner::cloud_callback ,
                 this);  
     point_pub = nh.advertise<geometry_msgs::PointStamped>("/sample/point", 1000);
     rrtVis = nh.advertise<visualization_msgs::Marker>("/tree/generated_paths" , 1000);
+    adaptedPathPub  = nh.advertise<mavros_msgs::Trajectory>("traj_planner/trajectory/generated" , 20 );
+    waypoint_sub  = nh.subscribe("mavros/trajectory/desired" , 10, &LocalRrtPlanner::desiredTraj , this);
+    edgs.clear();
+
 }
 
 
@@ -41,6 +48,18 @@ void LocalRrtPlanner::pose_callback(const nav_msgs::Odometry::ConstPtr &pose_in)
     iris_pose.pose = pose_in->pose;
     iris_pose.twist = pose_in->twist;
 }
+
+void LocalRrtPlanner::desiredTraj(const mavros_msgs::Trajectory::ConstPtr& _msg)
+{
+
+    if ( _msg == NULL ) {
+        return;
+    }
+   // desiredPath = *_msg;
+
+
+}
+
 
 void LocalRrtPlanner::cloud_callback(const sensor_msgs::PointCloud2::ConstPtr &cloud_in)
 {
@@ -151,18 +170,21 @@ void LocalRrtPlanner::publish_point(Eigen::Vector3d pt)
 
 void LocalRrtPlanner::insertNode(NodePtr node)
 {
-    double arr[3] = {node->coord(0) ,node->coord(1) ,node->coord(2)};
+    double arr[3] = {node->pos(0) ,node->pos(1) ,node->pos(2)};
     kd_insert(kd_tree , arr ,(void*)node);
 }
 
 
 void LocalRrtPlanner::create_root_node()
 {
-
+    
     Eigen::Vector3d cam_frame_pose(0 , 0 , 0.1);
     double arr[3] = {0 , 0 , 0.1};
     double current_rad = 0.5;
-    NodePtr root_node = new Node(cam_frame_pose , current_rad , 0 , 0);
+    std::cout << "creatng shared ptr\n";
+    //NodePtr nroot_node = std::make_shared<Node>(cam_frame_pose , current_rad , 0 , 0);
+    root_node = new Node(cam_frame_pose , current_rad , 0 , 0);
+    //root_node = nroot_node;
     kd_insert(kd_tree , arr ,(void*)root_node);
 }
 
@@ -187,8 +209,7 @@ bool LocalRrtPlanner::checkIntersect(Eigen::Vector3d pt_cam_frame)
     traced_pts.push_back(to_pcl_type(move_pt));
     while(ray_dist <= dist)
     {
-        if (radius_free_search(move_pt) == false)
-            return false;
+        if (radius_free_search(move_pt) == false)return false;    
         move_pt += step_dist * direction;
         traced_pts.push_back(to_pcl_type(move_pt));
         ray_dist = sq_dist(origin , move_pt);
@@ -204,7 +225,7 @@ NodePtr LocalRrtPlanner::nearestNeighbour(Eigen::Vector3d pt)
 
     double arr[3] = {pt(0) , pt(1) , pt(2)};
     struct kdres* nearest_node = kd_nearest(kd_tree , arr);
-    NodePtr near = NodePtr(kd_res_item(nearest_node, NULL));
+    NodePtr near((Node*)(kd_res_item(nearest_node, NULL)));
     kd_res_free(nearest_node);
     return near;
     
@@ -214,121 +235,107 @@ void LocalRrtPlanner::extendRRT(Eigen::Vector3d sampled_pt)
 {
     NodePtr nn = nearestNeighbour(sampled_pt);
 
-    if (sq_dist(nn->coord , sampled_pt) <= step_dist)
+    if (sq_dist(nn->pos , sampled_pt) <= step_dist)
     {
         traced_pts.clear();
-        NodePtr new_node = new Node(sampled_pt , safe_radius , 0 , 0);
+        if (radius_free_search(sampled_pt) == false)
+                return;
+        NodePtr new_node(new Node(sampled_pt , safe_radius , 0 , 0));
         new_node->parent_node = nn;
         nn->child_nodes.push_back(new_node);
         traced_pts.push_back(to_pcl_type(sampled_pt));
+        edgs.push_back(std::make_pair(nn->pos , sampled_pt));
+        
     }
     else
     {
         
-        Eigen::Vector3d direction = (sampled_pt - nn->coord);
+        Eigen::Vector3d direction = (sampled_pt - nn->pos);
         direction.normalize();
-        double dist = sq_dist(nn->coord , sampled_pt);
+        Eigen::Vector3d st_pt = nn->pos;
+        double dist = sq_dist(st_pt , sampled_pt);
+        
         double ray_dist = 0;
-        Eigen::Vector3d move_pt = nn->coord;
+        Eigen::Vector3d move_pt = nn->pos;
         traced_pts.clear();
         while(ray_dist <= dist)
         {
-            
             move_pt += step_dist * direction;
             traced_pts.push_back(to_pcl_type(sampled_pt));
             if (radius_free_search(move_pt) == false)
                 return;
-            NodePtr new_node = new Node(move_pt , safe_radius , 0 , 0);
-            nn->nxtNode_ptr.push_back(new_node);
+            NodePtr new_node(new Node(move_pt , safe_radius , 0 , 0));
+            new_node->valid = true;
+            new_node->parent_node = nn;
+            nn->child_nodes.push_back(new_node);
             insertNode(new_node);
+            edgs.push_back(std::make_pair(nn->pos , move_pt));
             nn = new_node;
-            
-            ray_dist = sq_dist(nn->coord , move_pt);
+            ray_dist = sq_dist(st_pt , move_pt);
         }
 
     }
 }
 
-inline void createLineStrip(visualization_msgs::Marker& line_strip)
+inline void toPointmsg(Eigen::Vector3d pt , geometry_msgs::Point& p)
 {
-    line_strip.header.frame_id  = "/color";
-    line_strip.header.stamp = ros::Time::now();
-    line_strip.ns = "points_and_lines";
-    line_strip.action = visualization_msgs::Marker::ADD;
-    line_strip.id = 1;
-    line_strip.type = visualization_msgs::Marker::LINE_STRIP;
-    line_strip.scale.x = 0.1;
-    line_strip.color.b = 1.0;
-    line_strip.color.a = 1.0;
+    p.x = pt(0);
+    p.y = pt(1);
+    p.z = pt(2);
+
 }
 
 void LocalRrtPlanner::visualizeRRT()
 {
 
-    visualization_msgs::Marker points, line_strip, line_list;
-    points.header.frame_id = line_strip.header.frame_id = line_list.header.frame_id = "/color";
-    points.header.stamp = line_strip.header.stamp = line_list.header.stamp = ros::Time::now();
-    points.ns = line_strip.ns = line_list.ns = "points_and_lines";
-    points.action = line_strip.action = line_list.action = visualization_msgs::Marker::ADD;
+    visualization_msgs::Marker points,line_list;
+    points.header.frame_id =  line_list.header.frame_id = "/color";
+    points.header.stamp =  line_list.header.stamp = ros::Time::now();
+    points.ns =  line_list.ns = "points_and_lines";
+    points.action  = line_list.action = visualization_msgs::Marker::ADD;
 
     points.id = 0;
-    line_strip.id = 1;
     line_list.id = 2;
     points.type = visualization_msgs::Marker::POINTS;
-    line_strip.type = visualization_msgs::Marker::LINE_STRIP;
     line_list.type = visualization_msgs::Marker::LINE_LIST;
 
-    points.scale.x = 0.2;
-    points.scale.y = 0.2;
+    points.scale.x = 0.05;
+    points.scale.y = 0.05;
 
-    line_strip.scale.x = 0.1;
-    line_list.scale.x = 0.1;
+   
+    line_list.scale.x = 0.05;
 
     points.color.g = 1.0f;
     points.color.a = 1.0;
 
-    line_strip.color.b = 1.0;
-    line_strip.color.a = 1.0;
-
     line_list.color.r = 1.0;
     line_list.color.a = 1.0;
 
-    std::vector<visualization_msgs::Marker> line_strips;
+    // std::vector<visualization_msgs::Marker> line_lists;
 
     NodePtr m_node = root_node;
-
-    while(m_node->nxtNode_ptr.size() != 0)
+    std::cout << "tree visulizer for " << edgs.size() << " tree edges\n";
+    for (int i = 0 ; i < edgs.size() ; i++)
     {
-        geometry_msgs::Point p;
-
-
-
-
-
-
+        geometry_msgs::Point p1 , p2;
+        toPointmsg(edgs[i].first , p1);
+        toPointmsg(edgs[i].second, p2);
+        line_list.points.push_back(p1);
+        line_list.points.push_back(p2);
+        points.points.push_back(p1);
+        points.points.push_back(p2);
     }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    rrtVis.publish(line_list);
+    //rrtVis.publish(points);
 
 }
 
 void LocalRrtPlanner::build_local_rrt()
 {
-    pcl::PLYWriter writer_object;
-    std::string blocked_points = "/home/halaldeen-ms/ros_ws/src/sem_project/traj_planner/src/blocked.ply";
-    std::string free_points = "/home/halaldeen-ms/ros_ws/src/sem_project/traj_planner/src/free.ply";
+    
+   
+    edgs.clear();
+    std::cout << "build local rrt\n";
     create_root_node();
     for (int i = 0 ; i < 500 ; i++)
     {
@@ -336,36 +343,13 @@ void LocalRrtPlanner::build_local_rrt()
         double max = radius_search(pt);
         std::cout <<  "radius of "<< max << std::endl;
         pcl::PointXYZ searchPoint(pt(0) , pt(1) , pt(2));
-        /*for (auto point : traced_pts)
-        {
-            blocked_cloud.push_back(point);
-        }*/
-        /*if (checkIntersect(pt , nearest_neighbour) == false){
-            std::cout << pt << " is not a valid point" << std::endl;
-            //Eigen::Vector3d transformed_pt = apply_point_transform(pt , "map" , "color");
-            blocked_cloud.push_back(searchPoint);
-            for (auto point : traced_pts)
-            {
-                blocked_cloud.push_back(point);
-            }
-            //publish_point(transformed_pt);
-            continue;
-        }
-        else{
-            free_cloud.push_back(searchPoint);
-            for (auto point : traced_pts)
-            {
-                free_cloud.push_back(point);
-            }
-            Eigen::Vector3d transformed_pt = apply_point_transform(pt , "map" , "color");
-            publish_point(transformed_pt);
-        }*/
-        extendRRT(pt);
-        
+        extendRRT(pt);   
     }
+    visualizeRRT();
     std::cout << "point published" << std::endl;
-    writer_object.write<pcl::PointXYZ>(free_p ,free_cloud);
-    writer_object.write<pcl::PointXYZ>(blocked_points ,blocked_cloud);
+    std::cout << "clearing kdtree" << std::endl;
+    kd_clear(kd_tree);
+    
 }
 
 

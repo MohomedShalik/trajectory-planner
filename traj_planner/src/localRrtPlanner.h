@@ -13,6 +13,7 @@
 #include <pcl/point_types.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <pcl/octree/octree_search.h>
+#include <mavros_msgs/Trajectory.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -60,20 +61,24 @@ public:
     std::vector<int> pointIdxRadSearch;
     std::vector<float> pointRadSquaredDistance;
     std::vector<std::vector<Eigen::Vector3d>> valid_paths;
-    
+    std::vector<std::pair<Eigen::Vector3d , Eigen::Vector3d>> edgs;
     NodePtr root_node;
     NodePtr best_path;
 
     double step_dist , safe_radius;
-
+    Eigen::Vector3d goal_point;
     void cloud_callback(const sensor_msgs::PointCloud2::ConstPtr& cloud_in);
     void pose_callback(const nav_msgs::Odometry::ConstPtr &pose_in);
     void publish_point(Eigen::Vector3d pt);
+    void desiredTraj(const mavros_msgs::Trajectory::ConstPtr& _msg);
 
     nav_msgs::Odometry iris_pose;
+    mavros_msgs::Trajectory desiredPath;
+    mavros_msgs::Trajectory adaptedPath;
     ros::Subscriber iris_pose_sub;
     ros::Subscriber cloud_sub;
-    ros::Subscriber desired_waypoint_sub;
+    ros::Subscriber waypoint_sub;
+    ros::Publisher adaptedPathPub;
     ros::Publisher point_pub;
     ros::Publisher rrtVis;
     tf2_ros::Buffer buffer_;

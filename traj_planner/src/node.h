@@ -1,11 +1,12 @@
 #include <Eigen/Eigen>
 #include <vector>  
+#include <memory>
 
 
 
 struct Node;
-typedef Node * NodePtr;
 
+typedef Node* NodePtr;
 struct Node
 {     
       Eigen::Vector3d pos;
@@ -13,6 +14,7 @@ struct Node
 
       bool valid;
       bool best;
+      
      
       NodePtr parent_node;
       std::vector<NodePtr> child_nodes;
@@ -29,7 +31,10 @@ struct Node
 		f      = f_;		
 		valid  = true;
 		best   = false; 
+            mark   = false;
 		parent_node = NULL;
       	child_nodes.clear();
       }
 };
+
+
