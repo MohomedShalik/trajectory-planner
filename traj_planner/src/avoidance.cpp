@@ -44,13 +44,14 @@ int main(int argc , char** argv)
    ros::init(argc, argv, NODE_NAME);
 
    ros::NodeHandle node;
-   ros::Rate rate(30.0);
+   ros::Rate rate(100.0);
 
   
    LocalRrtPlanner localRrt(node);
    while(ros::ok()){
       ros::spinOnce();
-      localRrt.build_local_rrt();
+      // localRrt.build_local_rrt(0.05);
+      localRrt.rrt_expansion(0.05);
       rate.sleep();
    }
 

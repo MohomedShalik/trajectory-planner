@@ -13,7 +13,7 @@ int main(int argc , char** argv)
    ros::init(argc, argv, NODE_NAME);
 
    ros::NodeHandle node;
-   ros::Rate rate(30.0);
+   ros::Rate rate(100.0);
    StateHandler fcuState(STATE_TOPIC , node);
 
    fcuState.Connect(rate);

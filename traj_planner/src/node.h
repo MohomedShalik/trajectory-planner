@@ -14,12 +14,13 @@ struct Node
 
       bool valid;
       bool best;
-      
+      bool change;
      
       NodePtr parent_node;
       std::vector<NodePtr> child_nodes;
-
-
+      
+      int rel_id;
+      int rel_dis;
       float g; // total cost of the shortest path from this node to the root
       float f; // heuristic value of the node to the target point
       
@@ -31,7 +32,7 @@ struct Node
 		f      = f_;		
 		valid  = true;
 		best   = false; 
-            mark   = false;
+            change = false;
 		parent_node = NULL;
       	child_nodes.clear();
       }
