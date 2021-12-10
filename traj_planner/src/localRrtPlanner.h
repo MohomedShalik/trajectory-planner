@@ -86,6 +86,7 @@ public:
     void desiredTraj(const mavros_msgs::Trajectory::ConstPtr& _msg);
 
     nav_msgs::Odometry iris_pose;
+    
     mavros_msgs::Trajectory desiredPath;
     mavros_msgs::Trajectory adaptedPath;
     ros::Subscriber iris_pose_sub;
@@ -124,6 +125,7 @@ public:
     inline int checkNodeRelation( double dis, NodePtr node_1, NodePtr node_2 );
     void addNode(Eigen::Vector3d s_pt ,Eigen::Vector3d n_pt, NodePtr nn , NodePtr& new_node);
     void extract_valid_paths(std::vector<std::vector<Eigen::Vector3d>> &valid_paths);
+    void publish_path();
 };
 
 

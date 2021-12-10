@@ -50,7 +50,7 @@ int main(int argc , char** argv)
    LocalRrtPlanner localRrt(node);
    while(ros::ok()){
       ros::spinOnce();
-      // localRrt.build_local_rrt(0.05);
+      //  localRrt.build_local_rrt(0.05);
       localRrt.rrt_expansion(0.05);
       rate.sleep();
    }

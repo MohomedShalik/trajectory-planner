@@ -36,7 +36,7 @@ void AvoidanceHandler::generateTraj(const mavros_msgs::Trajectory::ConstPtr& msg
     adaptedPath.point_valid[0]       = true;
     adaptedPath.point_1.position.x = msg->point_1.position.x;
     adaptedPath.point_1.position.y   = msg->point_1.position.y;
-    adaptedPath.point_1.position.z   = 5;
+    adaptedPath.point_1.position.z   = msg->point_1.position.z;
     adaptedPath.point_1.velocity.x   = NAN;
     adaptedPath.point_1.velocity.y   = NAN;
     adaptedPath.point_1.velocity.z   = NAN;
@@ -66,6 +66,7 @@ void AvoidanceHandler::publishPath()
     heartBeatAc.publish(heartBeat);
     if (publishedPath.point_valid[0] == true)
         plannerPathPublisher.publish(publishedPath);
+     ROS_INFO("path published");
 }
 
 

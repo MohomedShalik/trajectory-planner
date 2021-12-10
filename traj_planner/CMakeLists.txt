@@ -151,7 +151,7 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
 add_executable(${PROJECT_NAME}_node src/avoidance.cpp src/kdtree.c src/localRrtPlanner.cpp )
-
+add_executable(avoidance_handler src/AvoidanceHandler.cpp src/AvoidanceHandler.h src/StateHandler.h src/StateHandler.cpp src/avoidance_node.cpp)
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
 ## target back to the shorter version for ease of user use
@@ -167,7 +167,9 @@ target_link_libraries(${PROJECT_NAME}_node
   ${catkin_LIBRARIES}
   ${OpenCV_INCLUDE_DIRS}
 )
-
+target_link_libraries(avoidance_handler
+  ${catkin_LIBRARIES}
+)
 #############
 ## Install ##
 #############
