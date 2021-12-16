@@ -15,6 +15,7 @@ struct Node
       bool valid;
       bool best;
       bool change;
+      bool visit;
      
       NodePtr parent_node;
       std::vector<NodePtr> child_nodes;
@@ -33,6 +34,7 @@ struct Node
 		valid  = true;
 		best   = false; 
             change = false;
+            visit = false;
 		parent_node = NULL;
       	child_nodes.clear();
       }

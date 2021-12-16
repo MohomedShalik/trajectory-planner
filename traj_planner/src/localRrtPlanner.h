@@ -20,7 +20,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl/filters/voxel_grid.h>
-
+#include <geometry_msgs/PoseStamped.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 #include "tf2/transform_datatypes.h"
@@ -65,8 +65,8 @@ public:
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered; 
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_voxel_filtered;  
     // pcl::PointCloud<pcl::PointXYZ> free_cloud , blocked_cloud;  
-    pcl::PassThrough<pcl::PointXYZ> pass; 
-    pcl::VoxelGrid<pcl::PointXYZ> sor;
+    pcl::PassThrough<pcl::PointXYZ> pass_through_filter; 
+    pcl::VoxelGrid<pcl::PointXYZ> voxel_filter;
     //container to store the collision free reigons from the sampled nodes            
     std::vector<std::pair<Eigen::Vector3d , double>> free_space; 
     std::vector<int> pointIdxRadSearch;
@@ -75,7 +75,6 @@ public:
     std::vector<std::pair<Eigen::Vector3d , Eigen::Vector3d>> edgs;
     NodePtr root_node;
     NodePtr best_path;
-        // std::vector<visualization_msgs::Marker> line_lists;
     std::vector<NodePtr> nodes;
     double step_dist , safe_radius;
     Eigen::Vector3d goal_point;
@@ -84,17 +83,23 @@ public:
     void pose_callback(const nav_msgs::Odometry::ConstPtr &pose_in);
     void publish_point(Eigen::Vector3d pt);
     void desiredTraj(const mavros_msgs::Trajectory::ConstPtr& _msg);
+    void poseCallb(const geometry_msgs::PoseStamped::ConstPtr &msg);
+
 
     nav_msgs::Odometry iris_pose;
+    geometry_msgs::PoseStamped localPosition;
     
     mavros_msgs::Trajectory desiredPath;
     mavros_msgs::Trajectory adaptedPath;
+
     ros::Subscriber iris_pose_sub;
     ros::Subscriber cloud_sub;
     ros::Subscriber waypoint_sub;
     ros::Publisher adaptedPathPub;
     ros::Publisher point_pub;
     ros::Publisher rrtVis;
+    ros::Publisher pVis;
+    ros::Subscriber localPoseSub;
     tf2_ros::Buffer buffer_;
     tf2_ros::TransformListener listener_;
     std::default_random_engine generator;
@@ -114,18 +119,21 @@ public:
     void extendRRTStar(Eigen::Vector3d sampled_pt , Eigen::Vector3d n_pt ,  NodePtr nn , NodePtr& new_node);
     void extendRRT(Eigen::Vector3d sampled_pt , Eigen::Vector3d& near_pt , NodePtr nn);
     void visualizeRRT();
+    void visualizePAth(std::vector<Eigen::Vector3d> path);
     bool checkIntersect(Eigen::Vector3d pt_cam_frame);
-
+    std::vector<Eigen::Vector3d> extract_shortest_path();
+    std::vector<Eigen::Vector3d> trace_path();
+    void publish_path(std::vector<Eigen::Vector3d> sh_path);
     inline double get_dist(Eigen::Vector3d pt1 , Eigen::Vector3d pt2);
     void create_root_node();
     void build_local_rrt(double time_limit);
-    void rrt_expansion(double time_limit);
+    std::vector<Eigen::Vector3d> rrt_expansion(double time_limit);
     void tree_rewire(Eigen::Vector3d s_pt ,Eigen::Vector3d n_pt ,  NodePtr nn , NodePtr& new_node);
     inline bool isSuccessor(NodePtr curPtr, NodePtr nearPtr);
     inline int checkNodeRelation( double dis, NodePtr node_1, NodePtr node_2 );
     void addNode(Eigen::Vector3d s_pt ,Eigen::Vector3d n_pt, NodePtr nn , NodePtr& new_node);
     void extract_valid_paths(std::vector<std::vector<Eigen::Vector3d>> &valid_paths);
-    void publish_path();
+    
 };
 
 

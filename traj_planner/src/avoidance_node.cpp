@@ -16,6 +16,7 @@ int main(int argc , char** argv)
    ros::Rate rate(100.0);
    StateHandler fcuState(STATE_TOPIC , node);
 
+
    fcuState.Connect(rate);
    AvoidanceHandler avoidanceSystem(node);
 
