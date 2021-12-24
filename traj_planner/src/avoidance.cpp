@@ -48,11 +48,12 @@ int main(int argc , char** argv)
 
   
    LocalRrtPlanner localRrt(node);
+   
    while(ros::ok()){
+
       ros::spinOnce();
-      // localRrt.build_local_rrt(0.05);
       std::vector<Eigen::Vector3d> path_list = localRrt.rrt_expansion(0.05);
-      localRrt.publish_path(path_list);
+      // localRrt.publish_path(path_list);
       rate.sleep();
    }
 

@@ -43,8 +43,6 @@ void delete_node(void* node)
 
 inline double sq_dist(Eigen::Vector3d pt1 , Eigen::Vector3d pt2)
 {
-
-    //double i = (pt2 - pt1).squaredNorm();
     
     double i = sqrt(pow(pt2(0) - pt1(0),2)  + pow(pt2(1) - pt1(1),2) + pow(pt2(2) - pt1(2),2));
     return i;
@@ -59,21 +57,19 @@ LocalRrtPlanner::LocalRrtPlanner(ros::NodeHandle &nh):cloud(new pcl::PointCloud<
                                                     rand_z(fov.near_plane_depth , fov.far_plane_depth),
                                                     rand_x(-1,1),rand_y(-1,1)
 {
+
+    ROS_INFO("Initiating path planning");
     kd_tree = kd_create(3);
     kd_data_destructor(kd_tree , delete_node);
-    iris_pose_sub = nh.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom" , 10 , &LocalRrtPlanner::pose_callback, this);
+    
     cloud_sub = nh.subscribe<sensor_msgs::PointCloud2>("/realsense_camera/camera/depth_registered/points" , 10 , &LocalRrtPlanner::cloud_callback ,
                 this);  
     point_pub = nh.advertise<geometry_msgs::PointStamped>("/sample/point", 1000);
     rrtVis = nh.advertise<visualization_msgs::Marker>("/tree/generated_paths" , 1000);
-    pVis = nh.advertise<visualization_msgs::Marker>("/tree/selected_path" , 1000);
+    path_visualiser = nh.advertise<visualization_msgs::Marker>("/tree/selected_path" , 1000);
     adaptedPathPub  = nh.advertise<mavros_msgs::Trajectory>("traj_planner/trajectory/generated" , 20 );
-    waypoint_sub  = nh.subscribe("mavros/trajectory/desired" , 10, &LocalRrtPlanner::desiredTraj , this);
+    
 
-    localPoseSub  = nh.subscribe<geometry_msgs::PoseStamped>
-                          ("mavros/local_position/pose" , 10 , &LocalRrtPlanner::poseCallb , this );
-
-    edgs.clear();
     while(!buffer_.canTransform("color" , "map" , ros::Time::now() , ros::Duration(1,0))){
         ROS_WARN("transform unavailable");   
         continue;
@@ -82,16 +78,52 @@ LocalRrtPlanner::LocalRrtPlanner(ros::NodeHandle &nh):cloud(new pcl::PointCloud<
     pass_through_filter.setFilterFieldName ("z");
     pass_through_filter.setFilterLimits (0.0, 8.5);
     voxel_filter.setLeafSize (0.03f, 0.03f, 0.03f);
-    
 
+    std::thread internalthread(&LocalRrtPlanner::private_node, this, &LocalRrtPlanner::poseCallb,
+                                      &LocalRrtPlanner::pose_callback,
+                                      &LocalRrtPlanner::desiredTraj);
+    
+    
+    std:swap(internalthread ,private_node_thread );
 }
 
 void LocalRrtPlanner::poseCallb(const geometry_msgs::PoseStamped::ConstPtr &_msg)
 {
 
   this->localPosition = *_msg;
+
+   ROS_INFO("current pose %f %f %f" ,this->localPosition.pose.position.x, this->localPosition.pose.position.y,this->localPosition.pose.position.z);
+
   
 }
+
+void LocalRrtPlanner::private_node(void (LocalRrtPlanner::*pose_callback)(const geometry_msgs::PoseStamped::ConstPtr &_msg),
+                                    void(LocalRrtPlanner::*odom_pose_callback)(const nav_msgs::Odometry::ConstPtr &pose_in),
+                                    void(LocalRrtPlanner::*desired_traj_callback)(const mavros_msgs::Trajectory::ConstPtr& _msg))
+{
+
+    int 	argc = 0;
+    char **argv = {};
+
+    // ros::init(argc , argv , "private_node_handle");
+    ros::NodeHandle private_handle;
+    ros::Rate rate(100.0);
+    iris_pose_sub = private_handle.subscribe<nav_msgs::Odometry>("/mavros/local_position/odom" , 10 ,odom_pose_callback , this);
+    localPoseSub = private_handle.subscribe<geometry_msgs::PoseStamped>
+                          ("mavros/local_position/pose" , 10 , pose_callback , this);
+    waypoint_sub  = private_handle.subscribe<mavros_msgs::Trajectory>("mavros/trajectory/desired" , 10, desired_traj_callback , this);
+
+    while(ros::ok()){
+      ros::spinOnce();
+      rate.sleep();
+    }
+
+    return;
+
+}
+
+
+
 
 void LocalRrtPlanner::pose_callback(const nav_msgs::Odometry::ConstPtr &pose_in)
 {
@@ -169,14 +201,9 @@ Eigen::Vector3d LocalRrtPlanner::apply_point_transform(Eigen::Vector3d pt, const
     Eigen::Vector3d rand_point;
 
     tf2::Vector3 point(pt(0), pt(1) , pt(2));
-    /*while(!buffer_.canTransform("color" , "map" , ros::Time::now() , ros::Duration(1,0))){
-        ROS_ERROR("transform unavailable");   
-        continue;
-    }*/
-
     geometry_msgs::TransformStamped trmsg = buffer_.lookupTransform(
-      target_frame, source_frame,ros::Time(0)
-    );
+      target_frame, source_frame,ros::Time(0));
+    
     tf2::Stamped< tf2::Transform > transform;
     tf2::fromMsg(trmsg , transform);
     point = transform * point;
@@ -199,8 +226,6 @@ double LocalRrtPlanner::radius_search(Eigen::Vector3d pt)
     searchPoint.z = pt(2);
     int K = 1;
     if ( (local_octree.radiusSearch (searchPoint,safe_radius ,pointIdxRadSearch, pointRadSquaredDistance))> 0){
-        // double max = *std::max_element(pointRadSquaredDistance.begin(), pointRadSquaredDistance.end());
-        // std::cout << "vectorsize is " << pointRadSquaredDistance.size() << std::endl;
         return 0.3;
     }   
     else{
@@ -224,11 +249,7 @@ float LocalRrtPlanner::radius_free_search(Eigen::Vector3d pt)
 
 }
 
-void LocalRrtPlanner::add_free_space(Eigen::Vector3d pt  , double radius)
-{
-    Sphere safe_sphere(pt , radius);
-    free_space.push_back(safe_sphere);
-}
+
 
 void LocalRrtPlanner::publish_point(Eigen::Vector3d pt)
 {
@@ -249,44 +270,6 @@ void LocalRrtPlanner::insertNode(NodePtr node ,Eigen::Vector3d pos)
 }
 
 
-void LocalRrtPlanner::create_root_node()
-{
-    
-    Eigen::Vector3d cam_frame_pose(0 , 0 , 0.1);
-    double arr[3] = {0 , 0 , 0.1};
-    double current_rad = 0.5;
-    float g = sq_dist(cam_frame_pose , cam_frame_pose);
-    float f = sq_dist(cam_frame_pose , goal_point);
-    root_node = new Node(cam_frame_pose , current_rad , g , f);
-    nodes.push_back(root_node);
-    kd_insert(kd_tree , arr ,(void*)root_node);
-}
-
-
-bool LocalRrtPlanner::checkIntersect(Eigen::Vector3d pt_cam_frame)
-{
-    traced_pts.clear();
-    bool valid = true;
-    Eigen::Vector3d origin(0 , 0, 0.1);
-    Eigen::Vector3d direction = (pt_cam_frame - origin);
-    direction.normalize();
-    double dist = sq_dist(origin , pt_cam_frame);
-    double ray_dist = 0;
-    Eigen::Vector3d move_pt(0 , 0 , 0.1);
-    traced_pts.push_back(to_pcl_type(move_pt));
-    while(ray_dist <= dist)
-    {
-        if (radius_free_search(move_pt) == false)return false;    
-        move_pt += step_dist * direction;
-        traced_pts.push_back(to_pcl_type(move_pt));
-        ray_dist = sq_dist(origin , move_pt);
-    }
-    return true;
-}
-
-
-
-
 NodePtr LocalRrtPlanner::nearestNeighbour(Eigen::Vector3d pt , Eigen::Vector3d& nearest_pt)
 {
 
@@ -302,141 +285,6 @@ NodePtr LocalRrtPlanner::nearestNeighbour(Eigen::Vector3d pt , Eigen::Vector3d& 
     
 }
 
-void LocalRrtPlanner::extendRRT(Eigen::Vector3d sampled_pt)
-{
-
-    Eigen::Vector3d n_pt;
-    NodePtr nn = nearestNeighbour(sampled_pt , n_pt);
-    ROS_INFO("nearest neighbour %f %f %f" , n_pt(0) ,n_pt(1),n_pt(2) );
-    float g = nn->g + sq_dist(nn->pos, sampled_pt);
-    if ( g <= step_dist)
-    {
-        traced_pts.clear();
-        if (radius_free_search(sampled_pt) == false)
-                return;
-        float f = sq_dist(sampled_pt , goal_point);
-        NodePtr new_node(new Node(sampled_pt , safe_radius ,g, f));
-        new_node->parent_node = nn;
-        nn->child_nodes.push_back(new_node);
-        traced_pts.push_back(to_pcl_type(sampled_pt));
-        edgs.push_back(std::make_pair(nn->pos , sampled_pt));
-        nodes.push_back(new_node);
-        
-    }
-    else
-    {
-        NodePtr nn = nearestNeighbour(sampled_pt , n_pt);
-        Eigen::Vector3d direction = (sampled_pt - nn->pos);
-        direction.normalize();
-        Eigen::Vector3d st_pt = nn->pos;
-        double dist = sq_dist(st_pt , sampled_pt);
-        double ray_dist = 0;
-        Eigen::Vector3d move_pt = nn->pos;
-        float accum_g = nn->g;
-        traced_pts.clear();
-        while(ray_dist <= dist)
-        {
-            move_pt += step_dist * direction;
-
-            if (radius_free_search(move_pt) == false)
-                return;
-            accum_g += sq_dist(nn->pos , move_pt);
-            float f = sq_dist(move_pt, goal_point);
-            NodePtr new_node(new Node(move_pt , safe_radius ,accum_g, f));
-            new_node->valid = true;
-            new_node->parent_node = nn;
-            nn->child_nodes.push_back(new_node);
-            insertNode(new_node , new_node->pos );
-            edgs.push_back(std::make_pair(nn->pos , move_pt));
-            nodes.push_back(new_node);
-            nn = new_node;
-            ray_dist = sq_dist(st_pt , move_pt);
-        }
-
-    }
-}
-
-
-
-//extend function for RRT
-void LocalRrtPlanner::extendRRTStar(Eigen::Vector3d sampled_pt , Eigen::Vector3d n_pt ,  NodePtr nn , NodePtr& new_node)
-{
-
-    double arr[3] = {sampled_pt(0) , sampled_pt(1) , sampled_pt(2)};
-    struct kdres* nearest_node_range = kd_nearest_range(kd_tree , arr , 1.2); //get neighbours around the sampled point of the RRT within a radius of 0.5
-    //std::cout << "size checking" << std::endl;
-
-    //if there are no neighbours around simply add the node to its nearest neigbour
-    if (kd_res_size(nearest_node_range) == 0)
-    {
-        return;
-    }
-    
-    else
-    {
-        ROS_INFO("size not 0");
-        float min_dist , curr_val = 0;
-
-        NodePtr best_nn;
-        std::vector<NodePtr> ptrs;
-        std::vector<Eigen::Vector3d> pts;
-        // NodePtr nearPtr = (NodePtr)kd_res_item_data(nearest_node_range);
-        NodePtr nearPtr = nn;
-        curr_val = nearPtr->g + sq_dist(n_pt, sampled_pt) /*+ sq_dist(sampled_pt , goal_point)*/;
-        best_nn  = nearPtr;
-        Eigen::Vector3d near_pt ;
-        ptrs.push_back(nearPtr);
-        pts.push_back(n_pt);
-        while (kd_res_next(nearest_node_range))
-        {
-            double pos[3];
-
-            min_dist = curr_val;
-            NodePtr nearPtr = (NodePtr)kd_res_item(nearest_node_range , pos);
-            near_pt(0) = pos[0];
-            near_pt(1) = pos[1];
-            near_pt(2)=  pos[2];
-            ptrs.push_back(nearPtr);
-            pts.push_back(near_pt);
-            curr_val = nearPtr->g + sq_dist(near_pt , sampled_pt) /*+ sq_dist(sampled_pt , goal_point)*/;
-            if (curr_val < min_dist){
-                min_dist = curr_val;
-                best_nn = nearPtr;
-            }
-            continue;
-            
-        }
-        float g = best_nn->g + sq_dist(near_pt, sampled_pt);
-        float f = sq_dist(best_nn->pos , goal_point);
-        NodePtr new_node(new Node(sampled_pt , safe_radius ,g, f));
-       // insertNode(new_node);
-        // edgs.push_back(std::make_pair(best_nn->pos , sampled_pt));
-        
-
-        ROS_INFO("tree rewiring");
-        //tree rewiring procedure
-        for (auto node : ptrs)
-        {
-
-            if (node->g > (best_nn->g + sq_dist(best_nn->pos , node->pos)))
-            {
-                // erase node from node->parent_node->child_nodes
-                // std::vector<NodePtr>::iterator position = std::find(node->parent_node->child_nodes.begin(), 
-                //                                                 node->parent_node->child_nodes.end(), node);
-                // if (position != node->parent_node->child_nodes.end()) // 
-                //         node->parent_node->child_nodes.erase(position);
-                ROS_INFO("tree rewiring node");
-                node->parent_node = best_nn;
-                node->g = sq_dist(best_nn->pos , node->pos);
-                best_nn->child_nodes.push_back(node);
-                
-            }
-            continue;
-        }
-        kd_res_free(nearest_node_range);
-    }
-}
-
 
 
 inline void toPointmsg(Eigen::Vector3d pt , geometry_msgs::Point& p)
@@ -447,102 +295,6 @@ inline void toPointmsg(Eigen::Vector3d pt , geometry_msgs::Point& p)
 
 }
 
-
-void LocalRrtPlanner::extendRRT(Eigen::Vector3d sampled_pt , Eigen::Vector3d& near_pt , NodePtr nn)
-{
-
-    ROS_INFO("nearest neighbour %f %f %f" , near_pt(0) ,near_pt(1),near_pt(2));
-
-    float g = nn->g + sq_dist(near_pt, sampled_pt);
-    Eigen::Vector3d goal_pt_col = apply_point_transform(goal_point , "color" , "map");
-    if ( g <= step_dist)
-    {
-
-        
-
-        Eigen::Vector3d sampled_pt_map  = apply_point_transform(sampled_pt , "map" , "color");
-        float f = sq_dist(sampled_pt_map , goal_point);
-        NodePtr new_node(new Node(sampled_pt_map , safe_radius ,g, f));
-        new_node->parent_node = nn;
-        nn->child_nodes.push_back(new_node);
-        nodes.push_back(new_node);
-        
-    }
-
-    else
-    {
-        //NodePtr nn = nearestNeighbour(sampled_pt , n_pt);
-        Eigen::Vector3d step_pt_map;
-        Eigen::Vector3d direction = (sampled_pt - near_pt);
-        direction.normalize();
-        Eigen::Vector3d st_pt = near_pt;
-        double dist = sq_dist(st_pt , sampled_pt);
-        double ray_dist = 0;
-        Eigen::Vector3d move_pt = near_pt;
-        float accum_g = nn->g;
-        
-        while(ray_dist <= dist)
-        {
-            move_pt += step_dist * direction;
-            
-            if (radius_free_search(move_pt) == false)
-                return;
-            accum_g += sq_dist(near_pt , move_pt);
-            float f = sq_dist(move_pt, goal_pt_col);
-            step_pt_map = apply_point_transform(move_pt , "map" , "color");
-            NodePtr new_node(new Node(step_pt_map , safe_radius ,accum_g, f));
-            new_node->valid = true;
-            new_node->parent_node = nn;
-            nn->child_nodes.push_back(new_node);
-            insertNode(new_node , move_pt);
-            // edgs.push_back(std::make_pair(near_pt , move_pt));
-            nodes.push_back(new_node);
-            nn = new_node;
-            ray_dist = sq_dist(st_pt , move_pt);
-        }
-
-    }
-
-}
-
-
-void LocalRrtPlanner::build_local_rrt(double time_limit)
-{
-    
-    ROS_INFO("build local rrt");
-    edgs.clear();
-    
-    create_root_node();
-    ros::Time time_bef_expand = ros::Time::now();
-    ros::Time time_in_expand;
-    double elapsed_time;
-    for (int i = 0 ; i < 200 ; i++)
-    {
-        Eigen::Vector3d pt = sample_rand_point();
-        bool valid = radius_free_search(pt);
-        if (valid == false) {
-            ROS_INFO("sample %u invvalid" , i);
-            continue;}
-        ROS_INFO("adding %u th sample" , i);
-        pcl::PointXYZ searchPoint(pt(0) , pt(1) , pt(2));
-        extendRRT(pt);
-        time_in_expand = ros::Time::now();
-        if( (elapsed_time = (time_in_expand - time_bef_expand).toSec()) > time_limit ) {
-            ROS_WARN("TIME OVERDUE %f seconds %u th sample" , elapsed_time , i);
-            break;
-        }   
-    }
-    elapsed_time = (time_in_expand - time_bef_expand).toSec();
-    ROS_WARN("elapsed time %f seconds " , elapsed_time);
-    visualizeRRT();
-    std::vector<Eigen::Vector3d> s_path = extract_shortest_path();
-    //publish_path();
-    elapsed_time = (time_in_expand - time_bef_expand).toSec();
-    ROS_WARN("elapsed time after visualization %f seconds " , elapsed_time);
-    ROS_INFO("point published");
-    ROS_INFO("clearing kdtree"); 
-    kd_clear(kd_tree);   
-}
 
 void LocalRrtPlanner::addNode(Eigen::Vector3d s_pt ,Eigen::Vector3d n_pt, NodePtr nearest_neighbour , NodePtr& new_node)
 {
@@ -617,7 +369,7 @@ std::vector<Eigen::Vector3d> LocalRrtPlanner::rrt_expansion(double time_limit)
     kd_insert(kd_tree , arr ,(void*)root_node);
     best_path = root_node;
     int counter;
-
+    
     for (counter = 0 ; counter < 600 ; counter++)
     {
         time_in_expand = ros::Time::now();
@@ -883,7 +635,7 @@ void LocalRrtPlanner::visualizePAth(std::vector<Eigen::Vector3d> path)
         points.points.push_back(p2);
 
     }
-    pVis.publish(line_list);
+    path_visualiser.publish(line_list);
 }
 
 
@@ -1102,6 +854,7 @@ LocalRrtPlanner::~LocalRrtPlanner()
 {
 
     kd_free(kd_tree);
+    private_node_thread.join();
 }
 
 

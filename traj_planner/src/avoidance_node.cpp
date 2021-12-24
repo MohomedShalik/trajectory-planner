@@ -15,10 +15,10 @@ int main(int argc , char** argv)
    ros::NodeHandle node;
    ros::Rate rate(100.0);
    StateHandler fcuState(STATE_TOPIC , node);
-
+   AvoidanceHandler avoidanceSystem(node);
 
    fcuState.Connect(rate);
-   AvoidanceHandler avoidanceSystem(node);
+   
 
    while(ros::ok()){
       avoidanceSystem.publishPath();
